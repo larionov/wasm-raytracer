@@ -13,7 +13,7 @@ function getUint8Memory() {
 
 function passStringToWasm(arg) {
     const buf = cachedEncoder.encode(arg);
-    const ptr = wasm.__wbindgen_malloc_u8(buf.length);
+    const ptr = wasm.__wbindgen_get_string_ptr(buf.length);
     getUint8Memory().set(buf, ptr);
     return [ptr, buf.length];
 }
@@ -46,29 +46,20 @@ function getUint32Memory() {
     return cachegetUint32Memory;
 }
 
-function bufferToHex (buffer) {
-    return Array
-        .from (new Uint8Array (buffer))
-        .map (b =>b ?  ('' + b.toString (16).padStart (2, "0")) : '00')
-        .join ("");
-}
-
 /**
 * @param {string} arg0
 * @param {number} arg1
 * @param {number} arg2
 * @returns {Float32Array}
 */
-export function binding(arg0, arg1, arg2) {
-    const [ptr0, len0] = passStringToWasm(arg0);
+export function binding(json, width, height) {
+    const [ptr0, len0] = passStringToWasm(json);
     const retptr = globalArgumentPtr();
-    wasm.binding(retptr, ptr0, len0, arg1, arg2);
+    wasm.binding(width, height);
     const mem = getUint32Memory();
     const ptr = mem[retptr / 4];
     const len = mem[retptr / 4 + 1];
-
     const realRet = getArrayF32FromWasm(ptr, len).slice();
-    wasm.__wbindgen_free_f32(ptr, len);
     return realRet;
 }
 

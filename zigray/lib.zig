@@ -53,28 +53,6 @@ const Scene = struct {
     checker: []Vector,
 };
 
-
-export fn __wbindgen_global_argument_ptr() usize {
-    @fence(AtomicOrder.SeqCst);
-    return @ptrToInt(&arg_ptr);
-}
-
-export fn __wbindgen_free_u8(ptr: u32, len: u32) void {
-    @fence(AtomicOrder.SeqCst);
-    allocator.free(@intToPtr([*]u8, ptr)[0..len]);
-}
-
-export fn __wbindgen_free_f32(ptr: u32, len: u32) void {
-    @fence(AtomicOrder.SeqCst);
-    allocator.free(@intToPtr([*]volatile f32, ptr)[0..len]);
-}
-
-export fn __wbindgen_malloc_u8(len: u32) usize {
-    @fence(AtomicOrder.SeqCst);
-    const mem = allocator.alloc(u8, len) catch unreachable;
-    return @ptrToInt(mem.ptr);
-}
-
 fn closer(a: ?f32, b: ?f32) bool {
     if (a !=null and b != null)
         return (a.? > SELF_INTERSECTION_THRESHOLD and a.? < b.?);
@@ -105,6 +83,7 @@ fn intersect_scene(ray: Ray, scene: Scene) IntersectionResult {
 
     return closest;
 }
+
 fn object_intersection(object: Scene.Object, ray: Ray) ?f32 {
     return switch (object.type) {
         ObjectType.Sphere => blk: {
@@ -230,6 +209,22 @@ fn surface(
     return c.add3(b.scale(lambert_amount * lambert), b.scale(ambient));
 }
 
+fn is_light_visible(point: Vector, scene: Scene, light: Vector) bool {
+    const point_to_light_vector = light.subtract(point);
+    const distance_to_light = point_to_light_vector.length();
+
+    const ray = Ray {
+        .point = point,
+        .vector = point_to_light_vector.unit(),
+    };
+    const res = intersect_scene(ray, scene);
+    return if (res.distance != null) res.distance.? > distance_to_light else true;
+}
+
+fn min(a: f32, b: f32) f32 {
+    return if (a > b) b else a;
+}
+
 fn trace(ray: Ray, scene: Scene, depth: usize)  ?Vector {
     if (depth > 2) {
         return null;
@@ -250,6 +245,26 @@ fn trace(ray: Ray, scene: Scene, depth: usize)  ?Vector {
             );
         } else Vector.zero()
     ) else Vector.zero();
+}
+
+export fn __wbindgen_global_argument_ptr() usize {
+    @fence(AtomicOrder.SeqCst);
+    return @ptrToInt(&arg_ptr);
+}
+
+var canvasMemoryLength: usize = 0;
+var canvasMemoryPointer: ?[]f32 = null;
+var stringMemoryLength: usize = 0;
+var stringMemoryPointer: ?[]u8 = null;
+
+export fn __wbindgen_get_string_ptr(len: u32) usize {
+    stringMemoryLength = len;
+    if (stringMemoryPointer != null) {
+        return @ptrToInt(stringMemoryPointer.?.ptr);
+    }
+
+    stringMemoryPointer = allocator.alloc(u8, 2048) catch unreachable;
+    return @ptrToInt(stringMemoryPointer.?.ptr);
 }
 
 
@@ -282,7 +297,15 @@ fn render(scene_str: []const u8, width: u32, height: u32) []f32 {
     var x: u32 = 0;
     var y: u32 = 0;
 
-    var result = allocator.alloc(f32, len) catch unreachable;
+
+    if (len != canvasMemoryLength) {
+        if (canvasMemoryPointer != null) {
+            allocator.free(@ptrCast([*]f32, &canvasMemoryPointer)[0..canvasMemoryLength]);
+        }
+        canvasMemoryPointer = allocator.alloc(f32, len) catch unreachable;
+        canvasMemoryLength = len;
+    }
+
 
     while (y < height) {
         x = 0;
@@ -295,43 +318,26 @@ fn render(scene_str: []const u8, width: u32, height: u32) []f32 {
 
             const color = trace(ray, scene, 0) orelse Vector.new(0.0, 0.0, 0.0);
 
-            result[i + 0] = @floatCast(f32, color.x);
-            result[i + 1] = @floatCast(f32, color.y);
-            result[i + 2] = @floatCast(f32, color.z);
-            result[i + 3] = 255.0;
+            canvasMemoryPointer.?[i + 0] = @floatCast(f32, color.x);
+            canvasMemoryPointer.?[i + 1] = @floatCast(f32, color.y);
+            canvasMemoryPointer.?[i + 2] = @floatCast(f32, color.z);
+            canvasMemoryPointer.?[i + 3] = 255.0;
             x += 1;
         }
         y += 1;
     }
 
-    return result;
+    return canvasMemoryPointer.?;
 }
 
-fn is_light_visible(point: Vector, scene: Scene, light: Vector) bool {
-    const point_to_light_vector = light.subtract(point);
-    const distance_to_light = point_to_light_vector.length();
-
-    const ray = Ray {
-        .point = point,
-        .vector = point_to_light_vector.unit(),
-    };
-    const res = intersect_scene(ray, scene);
-    return if (res.distance != null) res.distance.? > distance_to_light else true;
-}
-
-fn min(a: f32, b: f32) f32 {
-    return if (a > b) b else a;
-}
-
-export fn binding(retptr: u32, ptr_scene: u32, len_scene: u32, width: u32, height: u32) void {
+export fn binding(width: u32, height: u32) void {
     @fence(AtomicOrder.SeqCst);
-    const input = @intToPtr([*]u8, ptr_scene)[0..len_scene];
-    defer allocator.free(input);
+    const input = @ptrCast([*]u8, stringMemoryPointer.?.ptr)[0..stringMemoryLength];
 
     var result = render(input, width, height);
 
-    @intToPtr([*]volatile usize, retptr).* = @ptrToInt(result.ptr);
-    @intToPtr([*]volatile usize, retptr + 4).* = width * height * 4;
+    arg_ptr[0] = @ptrToInt(result.ptr);
+    arg_ptr[1] = width * height * 4;
 }
 
 const testing = std.testing;
